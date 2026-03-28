@@ -105,8 +105,24 @@ def load_and_clean_dataset(csv_path: str):
     # ── Drop rows where description is empty after cleaning ─────────────────
     df = df[df["description"].str.len() > 10].copy()
 
-    # ── Clean descriptions (stored separately so original is preserved) ──────
-    df["clean_desc"] = df["description"].apply(clean_text)
+    # ── Enrich text: prepend expanded genre tags before description ───────────
+    # e.g.  'crime drama horror  A newlywed couple move into a house ...'
+    # Genre words like 'thriller crime horror' massively increase meaningful
+    # TF-IDF overlap between thematically similar movies.
+    # We repeat them (x3) so they carry enough IDF weight vs the description.
+    def enrich(row):
+        tags = " ".join(
+            g.strip().lower()
+            for g in str(row["expanded_genres"]).split(",")
+            if isinstance(row["expanded_genres"], str)
+        )
+        tags_repeated = (tags + " ") * 3   # repeat so genre terms get weight
+        return tags_repeated + row["description"]
+
+    df["enriched_text"] = df.apply(enrich, axis=1)
+
+    # ── Clean the enriched text (vectoriser input) ───────────────────────────
+    df["clean_desc"] = df["enriched_text"].apply(clean_text)
 
     # ── Drop rows where clean_desc is empty (extremely short / all stopwords) 
     df = df[df["clean_desc"].str.len() > 0].copy()

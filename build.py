@@ -16,7 +16,7 @@ dataset changes. recommender.py loads the saved files in milliseconds.
 
 Usage
 ─────
-    python build.py --input data/test.csv --model-dir model/
+    python3 build.py --input data/test.csv --model-dir model/
     python3 build.py                          # uses defaults below
 """
 

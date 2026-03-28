@@ -24,9 +24,9 @@ Diversity           Higher = more diverse / serendipitous results.
 
 Usage
 ─────
-    python evaluation.py                  # evaluate on all movies (slow ~30s)
-    python evaluation.py --sample 500     # evaluate on random 500-movie sample
-    python evaluation.py --sample 500 --seed 99
+    python3 evaluation.py                  # evaluate on all movies (slow ~30s)
+    python3 evaluation.py --sample 500     # evaluate on random 500-movie sample
+    python3 evaluation.py --sample 500 --seed 99
 """
 
 import argparse
@@ -49,13 +49,19 @@ def precision_at_k(rec: MovieRecommender, k: int, sample_idx: list[int]) -> floa
     """
     scores = []
     for idx in sample_idx:
-        row   = rec.df.loc[idx]
-        genre = row["genre"]
-        title = row["title"]
+        row        = rec.df.loc[idx]
+        genre_set  = row["genre_set"]   # multi-label set
+        title      = row["title"]
         results, err = rec.recommend(title=title, top_n=k)
         if err or not results:
             continue
-        hits = sum(1 for r in results if r["genre"] == genre)
+        # hit = recommended movie shares ANY genre with query movie
+        hits = sum(
+            1 for r in results
+            if rec.df.loc[rec._title_idx.get(r["title"].lower(), -1), "genre_set"]
+               & genre_set
+            if rec._title_idx.get(r["title"].lower(), -1) != -1
+        )
         scores.append(hits / k)
     return float(np.mean(scores)) if scores else 0.0
 
@@ -69,15 +75,24 @@ def recall_at_k(rec: MovieRecommender, k: int, sample_idx: list[int]) -> float:
     scores = []
     for idx in sample_idx:
         row        = rec.df.loc[idx]
-        genre      = row["genre"]
+        genre_set  = row["genre_set"]
         title      = row["title"]
-        total_same = genre_counts.get(genre, 1) - 1   # exclude the movie itself
+        # count all movies in corpus that share at least one genre
+        total_same = sum(
+            1 for j, gs in enumerate(rec.df["genre_set"])
+            if j != idx and gs & genre_set
+        )
         if total_same == 0:
             continue
         results, err = rec.recommend(title=title, top_n=k)
         if err or not results:
             continue
-        hits = sum(1 for r in results if r["genre"] == genre)
+        hits = sum(
+            1 for r in results
+            if rec.df.loc[rec._title_idx.get(r["title"].lower(), -1), "genre_set"]
+               & genre_set
+            if rec._title_idx.get(r["title"].lower(), -1) != -1
+        )
         scores.append(hits / min(k, total_same))
     return float(np.mean(scores)) if scores else 0.0
 
@@ -203,6 +218,13 @@ def run_evaluation(model_dir: str = "model", sample: int = None, seed: int = 42)
     rec = MovieRecommender(model_dir)
     n   = len(rec.df)
 
+    # Build multi-label genre sets from expanded_genres column
+    # This is the ground truth used for hit checking
+    def parse_genre_set(s):
+        if not isinstance(s, str): return set()
+        return {g.strip().lower() for g in s.split(',')}
+    rec.df["genre_set"] = rec.df["expanded_genres"].apply(parse_genre_set)
+
     # sample indices
     random.seed(seed)
     all_idx = list(range(n))
@@ -269,7 +291,7 @@ def run_evaluation(model_dir: str = "model", sample: int = None, seed: int = 42)
 
     # ── 7. Per-genre Precision@5 ──────────────────────────────────────────────
     print("\n" + "─" * 65)
-    print("  [7] Per-genre Precision@5")
+    print("  [7] Per-genre Precision@5  (multi-label)")
     print("─" * 65)
     genre_rows = {}
     for idx in sample_idx:
@@ -278,7 +300,7 @@ def run_evaluation(model_dir: str = "model", sample: int = None, seed: int = 42)
 
     genre_results = []
     for genre, idxs in sorted(genre_rows.items()):
-        p = precision_at_k(rec, 5, idxs)
+        p = precision_at_k(rec, 5, idxs)  # already uses multi-label
         genre_results.append((genre, p, len(idxs)))
 
     genre_results.sort(key=lambda x: x[1], reverse=True)
